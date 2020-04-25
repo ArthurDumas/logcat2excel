@@ -70,7 +70,10 @@ function iterate(filePaths, index, done)
 
 function logcat2excel(logcatPath, xlsxPath, done) {
     console.log(`Creating ${xlsxPath} for ${logcatPath}`);
-    const workbook = new excel.Workbook();
+    const workbook = new excel.Workbook({
+        logLevel: 0, // 0 - 5. 0 suppresses all logs, 1 shows errors only, 5 is for debugging
+        author: 'https://github.com/ArthurDumas/logcat2excel',
+    });
 
     const parsedWorksheet = workbook.addWorksheet('Parsed');
     parsedWorksheet.cell(1, 1).string('Line');
@@ -171,10 +174,15 @@ function logcat2excel(logcatPath, xlsxPath, done) {
 
         ++lineNum;
     }).on('close', () => {
-        // done reading all the lines of the file
-        workbook.write(xlsxPath);
-        console.log(`Saved ${xlsxPath}`);
-        done();
+        // done reading all the lines of the logcat file
+        workbook.write(xlsxPath, (err, stats) => {
+            if (err) {
+                console.error(err);
+            } else {
+                console.log(`Saved ${xlsxPath}`);
+            }
+            done();
+        });
     });
 };
 
@@ -188,15 +196,17 @@ function parseLogcatLine(line) {
     };
 
     // RegEx: (time) (level) (tag) (pid) (data)
-    // https://regexr.com/
-    // 12-31 16:00:03.025 D/free_area_init_node(    0): node 0, pgdat c10bd100, node_mem_map d9000000
-    // 12-31 16:00:03.024 I/        (    0): Initializing cgroup subsys cpuacct
-    // 04-20 15:10:49.960 I/am_on_resume_called( 1250): [0,crc64ba911c6b925d7b6e.SplashScreen,RESUME_ACTIVITY]
-    // 04-20 15:10:51.317 W/ActivityManager(  510): Slow operation: 71ms so far, now at startProcess: done updating pids map
+    // https://regex101.com/        https://regexr.com/
+    // Sample typical logcat lines that are easy to parse:
+    //      12-31 16:00:03.025 D/free_area_init_node(    0): node 0, pgdat c10bd100, node_mem_map d9000000
+    //      12-31 16:00:03.024 I/        (    0): Initializing cgroup subsys cpuacct
+    //      04-20 15:10:49.960 I/am_on_resume_called( 1250): [0,crc64ba911c6b925d7b6e.SplashScreen,RESUME_ACTIVITY]
+    //      04-20 15:10:51.317 W/ActivityManager(  510): Slow operation: 71ms so far, now at startProcess: done updating pids map
     // The following logcat line required the use of lazy match (.*?) to prevent the first (.*) from eating through the first parens:
-    // 12-31 19:00:01.680 I/auditd  (  192): type=1403 audit(0.0:2): policy loaded auid=4294967295 ses=4294967295
-    //const regex = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d) (.)\/(.*)\(\s*(.*)\)\: (.*)/;
-    const regex = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d) (.)\/(.*?)\(\s*(.*?)\)\: (.*)/;
+    //      12-31 19:00:01.680 I/auditd  (  192): type=1403 audit(0.0:2): policy loaded auid=4294967295 ses=4294967295
+    // The following logcat line caused issues because the tag contains parens so changed tag group to be (.+?) instead of (.*?):
+    //      12-31 19:00:25.246 I/(hci_tty)(    0): inside hci_tty_open (d6d7db28, d79fdb40)
+    const regex = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d) (.)\/(.+?)\(\s*(\d+)\): (.*)/;
     const parsable = regex.test(line);
     const parts = line.match(regex);
 
