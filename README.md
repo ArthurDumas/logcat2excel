@@ -2,17 +2,17 @@
 
 Simple Node.js tool to convert an Android logcat file into an Excel spreadsheet (using the excel4node package).
 
-Usage: node index.js
 
-> Create a .xlsx file for each .logcat file in the current wording directory.
+Create a .xlsx file for each .logcat file in the current wording directory.
+> Usage: node index.js
 
-Usage: node index.js [folder]
+Create a .xlsx file for each .logcat file in [folder].
 
-> Create a .xlsx file for each .logcat file in [folder].
+> Usage: node index.js [folder]
 
-Usage: node index.js [logcat-file]
+Create a .xlsx file for [logcat-file].
 
-> Create a .xlsx file for [logcat-file].
+> Usage: node index.js [logcat-file]
 
 Logcat file must have extension .logcat.
 
@@ -22,7 +22,8 @@ Customize dataStyles regular expressions in the logcat2excel() function for cust
 
 ## To do
 
-Create Excel worksheet as a formatted table.
+1. Create Excel worksheet as a formatted table.
+2. Improve regex line parser.
 
 ## To use
 
