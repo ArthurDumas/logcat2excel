@@ -31,19 +31,26 @@ if (process.argv.length > 2) {
         if (lstat.isFile()) {
             if (path.extname(f).toLowerCase() === LOGCAT_EXTENSION) {
                 filePaths.push(path.resolve(f));
+            } else {
+                console.log(`File must have extension ${LOGCAT_EXTENSION}`);
             }
         } else {
             filePaths = getLogcatFilesInFolder(path.resolve(f));
         }
+    } else {
+        console.log(`Cannot find ${f}`);
     }
 } else {
     filePaths = getLogcatFilesInFolder(path.resolve('./'));
 }
 
 if (filePaths.length === 0) {
-    console.error('Nothing to do');
+    console.log('Nothing to do');
 } else {
+    console.log(`Processing ${filePaths.length} logcat file${(filePaths.length) > 1 ? 's' : ''}`);
+
     // start the single file at a time iteration
+    // (doing a single file at a time to avoid large memory consumption)
     iterate(filePaths, 0, () => {
         console.log('Done');
     });
@@ -75,17 +82,24 @@ function logcat2excel(logcatPath, xlsxPath, done) {
         author: 'https://github.com/ArthurDumas/logcat2excel',
     });
 
+    const PARSED_COL_LINE = 1;
+    const PARSED_COL_TIME = 2;
+    const PARSED_COL_LEVEL = 3;
+    const PARSED_COL_TAG = 4;
+    const PARSED_COL_PID = 5;
+    const PARSED_COL_DATA = 6;
+
     const parsedWorksheet = workbook.addWorksheet('Parsed');
-    parsedWorksheet.cell(1, 1).string('Line');
-    parsedWorksheet.cell(1, 2).string('Time');
-    parsedWorksheet.cell(1, 3).string('Level');
-    parsedWorksheet.cell(1, 4).string('Tag');
-    parsedWorksheet.cell(1, 5).string('PID');
-    parsedWorksheet.cell(1, 6).string('Data');
+    parsedWorksheet.cell(1, PARSED_COL_LINE).string('Line');
+    parsedWorksheet.cell(1, PARSED_COL_TIME).string('Time');
+    parsedWorksheet.cell(1, PARSED_COL_LEVEL).string('Level');
+    parsedWorksheet.cell(1, PARSED_COL_TAG).string('Tag');
+    parsedWorksheet.cell(1, PARSED_COL_PID).string('PID');
+    parsedWorksheet.cell(1, PARSED_COL_DATA).string('Data');
 
     const rawWorksheet = workbook.addWorksheet('Raw');
 
-    const dateStyle = workbook.createStyle({
+    const timeStyle = workbook.createStyle({
         numberFormat: 'm/d/yyyy h:mm:ss.000'
     });
 
@@ -131,6 +145,14 @@ function logcat2excel(logcatPath, xlsxPath, done) {
                     fgColor: 'f4b084'
                 }
             })
+        },
+        {
+            regex: /^---/,
+            style: workbook.createStyle({
+                font: {
+                    bold: true
+                }
+            })
         }
     ];
 
@@ -144,30 +166,31 @@ function logcat2excel(logcatPath, xlsxPath, done) {
     rl.on('line', (line) => {
         rawWorksheet.cell(lineNum, 1).string(line);
 
+        const parsedLineNum = lineNum + 1; // to account for header row
         const parsed = parseLogcatLine(line);
-        parsedWorksheet.cell(lineNum + 1, 1).number(lineNum);
-        parsedWorksheet.cell(lineNum + 1, 2).string(parsed.time).style(dateStyle);
-        parsedWorksheet.cell(lineNum + 1, 3).string(parsed.level);
-        parsedWorksheet.cell(lineNum + 1, 4).string(parsed.tag);
-        parsedWorksheet.cell(lineNum + 1, 5).string(parsed.pid);
-        parsedWorksheet.cell(lineNum + 1, 6).string(parsed.data);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_LINE).number(lineNum);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_TIME).string(parsed.time).style(timeStyle);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_LEVEL).string(parsed.level);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_TAG).string(parsed.tag);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_PID).string(parsed.pid);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_DATA).string(parsed.data);
  
         if (levelStyles.hasOwnProperty(parsed.level)) {
-            parsedWorksheet.cell(lineNum + 1, 1).style(levelStyles[parsed.level]);
-            parsedWorksheet.cell(lineNum + 1, 2).style(levelStyles[parsed.level]);
-            parsedWorksheet.cell(lineNum + 1, 3).style(levelStyles[parsed.level]);
+            parsedWorksheet.cell(parsedLineNum, PARSED_COL_LINE).style(levelStyles[parsed.level]);
+            parsedWorksheet.cell(parsedLineNum, PARSED_COL_TIME).style(levelStyles[parsed.level]);
+            parsedWorksheet.cell(parsedLineNum, PARSED_COL_LEVEL).style(levelStyles[parsed.level]);
         }
 
         // first regex to match will be used
         for (const dataStyle of dataStyles) {
             if (dataStyle.regex.test(parsed.tag)) {
-                parsedWorksheet.cell(lineNum + 1, 4).style(dataStyle.style);
+                parsedWorksheet.cell(parsedLineNum, PARSED_COL_TAG).style(dataStyle.style);
                 break;
             }
         }
         for (const dataStyle of dataStyles) {
             if (dataStyle.regex.test(parsed.data)) {
-                parsedWorksheet.cell(lineNum + 1, 6).style(dataStyle.style);
+                parsedWorksheet.cell(parsedLineNum, PARSED_COL_DATA).style(dataStyle.style);
                 break;
             }
         }
@@ -177,7 +200,7 @@ function logcat2excel(logcatPath, xlsxPath, done) {
         // done reading all the lines of the logcat file
         workbook.write(xlsxPath, (err, stats) => {
             if (err) {
-                console.error(err);
+                console.log(err);
             } else {
                 console.log(`Saved ${xlsxPath}`);
             }
@@ -224,6 +247,7 @@ function parseLogcatLine(line) {
 };
 
 function getLogcatFilesInFolder(folderPath) {
+    console.log(`Searching for logcats in ${folderPath}`);
     return fs.readdirSync(folderPath)
         .filter((file) => (path.extname(file).toLowerCase() === LOGCAT_EXTENSION))
         .map((file) => path.join(folderPath, file));
