@@ -13,18 +13,21 @@ Create a .xlsx file for [logcat-file]:
 
 > Usage: node index.js [logcat-file]
 
-Logcat file must have extension .logcat.
+Logcat must be created with the "-v time" or "-v threadtime" output format. Threadtime is the logcat default if -v isn't specified.
+
+Logcat file must be in ascii or utf8 encoding. If running adb logcat from PowerShell, be sure to change the default encoding with something like this: "adb logcat -b all -d | out-file -encoding utf8 myLog.logcat".
+
+Logcat file must have extension .logcat or .log.
 
 Command line doesn't support wildcards (i.e., \*.logcat)
 
 Logcat file is skipped if .xlsx file with same name already exists.
 
-Customize dataStyles regular expressions in the logcat2excel() function for custom color coding.
+Customize dataStyles regular expressions in the logcat2excel() function for custom color coding of tags and data.
 
 ## To do
 
-1. Create Excel worksheet as a formatted table.
-2. Improve regex line parser.
+- Create Excel worksheet as a formatted table. Not supported by excel4node at this time.
 
 ## To use
 

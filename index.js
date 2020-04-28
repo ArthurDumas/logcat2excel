@@ -7,7 +7,7 @@
 // If neither [folder] or [logcat-file] is specified,
 // will use folder ./ (current working directory).
 //
-// Logcat file must have extension .logcat.
+// Logcat file must have extension .logcat or .log.
 //
 // Logcat file is skipped if .xlsx file with same name already exists.
 
@@ -18,8 +18,8 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const excel = require('excel4node');
-
 const LOGCAT_EXTENSION = '.logcat';
+const LOG_EXTENSION = '.log';
 const XLSX_EXTENSION = '.xlsx';
 
 // command line handler
@@ -29,10 +29,10 @@ if (process.argv.length > 2) {
     if (fs.existsSync(f)) {
         const lstat = fs.lstatSync(f);
         if (lstat.isFile()) {
-            if (path.extname(f).toLowerCase() === LOGCAT_EXTENSION) {
+            if (path.extname(f).toLowerCase() === LOGCAT_EXTENSION || path.extname(f).toLowerCase() === LOG_EXTENSION) {
                 filePaths.push(path.resolve(f));
             } else {
-                console.log(`File must have extension ${LOGCAT_EXTENSION}`);
+                console.log(`File must have extension ${LOGCAT_EXTENSION} or ${LOG_EXTENSION}`);
             }
         } else {
             filePaths = getLogcatFilesInFolder(path.resolve(f));
@@ -65,6 +65,9 @@ function iterate(filePaths, index, done)
         if (fs.existsSync(xlsxPath)) {
             console.log(`Skipping ${logcatPath} because ${xlsxPath} already exists`);
             iterate(filePaths, index + 1, done); // next iteration
+        } else if (isUtf16WithBOM(logcatPath)) {
+            console.log(`Skipping ${logcatPath} because it doesn't use ascii or utf8 encoding`);
+            iterate(filePaths, index + 1, done); // next iteration
         } else {
             logcat2excel(logcatPath, xlsxPath, () => {
                 iterate(filePaths, index + 1, done); // next iteration
@@ -87,7 +90,8 @@ function logcat2excel(logcatPath, xlsxPath, done) {
     const PARSED_COL_LEVEL = 3;
     const PARSED_COL_TAG = 4;
     const PARSED_COL_PID = 5;
-    const PARSED_COL_DATA = 6;
+    const PARSED_COL_TID = 6;
+    const PARSED_COL_DATA = 7;
 
     const parsedWorksheet = workbook.addWorksheet('Parsed');
     parsedWorksheet.cell(1, PARSED_COL_LINE).string('Line');
@@ -95,6 +99,7 @@ function logcat2excel(logcatPath, xlsxPath, done) {
     parsedWorksheet.cell(1, PARSED_COL_LEVEL).string('Level');
     parsedWorksheet.cell(1, PARSED_COL_TAG).string('Tag');
     parsedWorksheet.cell(1, PARSED_COL_PID).string('PID');
+    parsedWorksheet.cell(1, PARSED_COL_TID).string('TID');
     parsedWorksheet.cell(1, PARSED_COL_DATA).string('Data');
 
     const rawWorksheet = workbook.addWorksheet('Raw');
@@ -173,8 +178,9 @@ function logcat2excel(logcatPath, xlsxPath, done) {
         parsedWorksheet.cell(parsedLineNum, PARSED_COL_LEVEL).string(parsed.level);
         parsedWorksheet.cell(parsedLineNum, PARSED_COL_TAG).string(parsed.tag);
         parsedWorksheet.cell(parsedLineNum, PARSED_COL_PID).string(parsed.pid);
+        parsedWorksheet.cell(parsedLineNum, PARSED_COL_TID).string(parsed.tid);
         parsedWorksheet.cell(parsedLineNum, PARSED_COL_DATA).string(parsed.data);
- 
+
         if (levelStyles.hasOwnProperty(parsed.level)) {
             parsedWorksheet.cell(parsedLineNum, PARSED_COL_LINE).style(levelStyles[parsed.level]);
             parsedWorksheet.cell(parsedLineNum, PARSED_COL_TIME).style(levelStyles[parsed.level]);
@@ -215,32 +221,72 @@ function parseLogcatLine(line) {
         level: '',
         tag: '',
         pid: '',
+        tid: '',
         data: ''
     };
 
-    // RegEx: (time) (level) (tag) (pid) (data)
-    // https://regex101.com/        https://regexr.com/
-    // Sample typical logcat lines that are easy to parse:
+    // Test regular expressions with https://regex101.com/ or https://regexr.com/
+
+    // logcat -v time
+    // RegEx captures: (time) (level) (tag) (pid) (data)
+    // This parser assumes "logcat -v time" output format.
+    // Sample logcat lines to test parsing:
     //      12-31 16:00:03.025 D/free_area_init_node(    0): node 0, pgdat c10bd100, node_mem_map d9000000
     //      12-31 16:00:03.024 I/        (    0): Initializing cgroup subsys cpuacct
     //      04-20 15:10:49.960 I/am_on_resume_called( 1250): [0,crc64ba911c6b925d7b6e.SplashScreen,RESUME_ACTIVITY]
     //      04-20 15:10:51.317 W/ActivityManager(  510): Slow operation: 71ms so far, now at startProcess: done updating pids map
-    // The following logcat line required the use of lazy match (.*?) to prevent the first (.*) from eating through the first parens:
     //      12-31 19:00:01.680 I/auditd  (  192): type=1403 audit(0.0:2): policy loaded auid=4294967295 ses=4294967295
-    // The following logcat line caused issues because the tag contains parens so changed tag group to be (.+?) instead of (.*?):
     //      12-31 19:00:25.246 I/(hci_tty)(    0): inside hci_tty_open (d6d7db28, d79fdb40)
-    const regex = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d) (.)\/(.+?)\(\s*(\d+)\): (.*)/;
-    const parsable = regex.test(line);
-    const parts = line.match(regex);
+    const regexTime = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d) (.)\/(.+?)\s*\(\s*(\d+)\): (.*)/;
 
-    if (!parsable || parts.length !== 6) {
-        parsed.data = line;
-    } else {
-        parsed.time = parts[1];
-        parsed.level = parts[2];
-        parsed.tag = parts[3].trimEnd(); // couldn't get regular expression to eat this optional whitespace
-        parsed.pid = parts[4];
-        parsed.data = parts[5];
+    // logcat -v threadtime
+    // RegEx captures: (time) (pid) (tid) (level) (tag) (data)
+    // Sample logcat lines to test parsing:
+    //      12-31 19:00:00.400   191   191 I auditd  : type=2000 audit(0.0:1): initialized
+    //      04-27 11:19:19.131  1238  1646 I art     : Starting a blocking GC Explicit
+    const regexThreadtime = /(^\d\d-\d\d \d\d:\d\d:\d\d\.\d\d\d)\s+(\d+)\s+(\d+)\s+(.)\s+(.*?)\s*: (.*)/;
+
+    const parseHandlers = [
+        { // logcat -v time
+            regex: regexTime,
+            numMatches: 6,
+            fn: (parsed, matches) => {
+                parsed.time = matches[1];
+                parsed.level = matches[2];
+                parsed.tag = matches[3];
+                parsed.pid = matches[4];
+                parsed.data = matches[5];
+            }
+        },
+        { // logcat -v threadtime
+            regex: regexThreadtime,
+            numMatches: 7,
+            fn: (parsed, matches) => {
+                parsed.time = matches[1];
+                parsed.pid = matches[2];
+                parsed.tid = matches[3];
+                parsed.level = matches[4];
+                parsed.tag = matches[5];
+                parsed.data = matches[6];
+            }
+        },
+        { // default catch-all
+            regex: /.*/,
+            numMatches: 1,
+            fn: (parsed, matches) => {
+                parsed.data = matches[0];
+            }
+        }
+    ];
+
+    // first regex to match will be used
+    for (const parseHandler of parseHandlers) {
+        const matches = line.match(parseHandler.regex);
+        const goodParse = matches && (matches.length === parseHandler.numMatches);
+        if (goodParse) {
+            parseHandler.fn(parsed, matches);
+            break;
+        }
     }
 
     return parsed;
@@ -249,11 +295,39 @@ function parseLogcatLine(line) {
 function getLogcatFilesInFolder(folderPath) {
     console.log(`Searching for logcats in ${folderPath}`);
     return fs.readdirSync(folderPath)
-        .filter((file) => (path.extname(file).toLowerCase() === LOGCAT_EXTENSION))
+        .filter((file) => (path.extname(file).toLowerCase() === LOGCAT_EXTENSION) || (path.extname(file).toLowerCase() === LOG_EXTENSION))
         .map((file) => path.join(folderPath, file));
 }
 
 function logcatToXlsxPath(filePath) {
     const parts = path.parse(filePath);
     return path.join(parts.dir, parts.name + XLSX_EXTENSION);
+}
+
+// Byte order mark isn't required to start a utf16 or utf8 file but it
+// does seem to be present in files saved by PowerShell in UCS2-LE encoding
+// so at least testing for that common scenario since I couldn't figure out
+// how to get readline and RegEx to work with utf16.
+// https://stackoverflow.com/questions/50045841/how-to-detect-file-encoding-in-nodejs
+function getFileEncodingFromBOM(f) {
+    var d = new Buffer.alloc(5, [0, 0, 0, 0, 0]);
+    var fd = fs.openSync(f, 'r');
+    fs.readSync(fd, d, 0, 5, 0);
+    fs.closeSync(fd);
+
+    let e = 'ascii';
+    if (d[0] === 0xEF && d[1] === 0xBB && d[2] === 0xBF) {
+        e = 'utf8';
+    } else if (d[0] === 0xFE && d[1] === 0xFF) {
+        e = 'utf16be';
+    } else if (d[0] === 0xFF && d[1] === 0xFE) {
+        e = 'utf16le';
+    }
+
+    return e;
+}
+
+function isUtf16WithBOM(f) {
+    const e = getFileEncodingFromBOM(f);
+    return (e === 'utf16be') || (e === 'utf16le');
 }
